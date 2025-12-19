@@ -2,6 +2,32 @@
   "name": "dev-flow-cli",
   "version": "1.0.0",
   "description": "CLI tool to automate development workflow",
+  "keywords": [
+    "git",
+    "workflow",
+    "cli",
+    "automation",
+    "dev-flow"
+  ],
+  "homepage": "https://github.com/007sair/dev-flow-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/007sair/dev-flow-cli.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "files": [
+    "bin",
+    "src",
+    "docs"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
   "main": "src/index.js",
   "bin": {
     "flow": "./bin/flow.js"
@@ -13,9 +39,7 @@
     "chalk": "^4.1.2",
     "inquirer": "^8.2.5",
     "semver": "^7.5.4",
-    "execa": "^5.1.1"
-  },
-  "devDependencies": {
+    "execa": "^5.1.1",
     "standard-version": "^9.5.0"
   }
 }
