@@ -2,6 +2,7 @@ const { log, askList } = require('./utils');
 const featureSync = require('./commands/feature-sync');
 const preRelease = require('./commands/pre-release');
 const releaseFinish = require('./commands/release-finish');
+const featureSyncPro = require('./commands/feature-sync-pro');
 const pkg = require('../package.json');
 
 function showHelp() {
@@ -59,16 +60,19 @@ async function main() {
   log('   • 使用 control + c    退出流程\n', 'gray');
 
   const choice = await askList('请选择当前工作流阶段：', [
-    { name: '阶段 1：特性同步 (将个人分支合并到公共特性分支)', value: 'feature-sync' },
+    { name: '阶段 1：特性同步 (将个人分支合并到公共特性分支)', value: 'feature-sync-pro' },
     { name: '阶段 2：预发布 (从公共特性分支创建 Release 分支)', value: 'pre-release' },
     { name: '阶段 3：正式发布 (将 Release 分支合并到 Master 并发版)', value: 'release-finish' },
   ]);
 
   try {
     switch (choice) {
-      case 'feature-sync':
-        await featureSync();
-        break;
+      // case 'feature-sync':
+      //   await featureSync();
+      //   break;
+      case 'feature-sync-pro':
+        await featureSyncPro();
+        break;  
       case 'pre-release':
         await preRelease();
         break;
