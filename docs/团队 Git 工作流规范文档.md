@@ -72,15 +72,7 @@ git push --force-with-lease origin feat/user-task-01
 
 目标：将个人分支的 N 个提交压缩为 1 个提交合入 `feat/1.0.0`。
 
-#### 方式 A：网页端 Pull Request (推荐)
-
-1.  在 GitLab/GitHub 发起 PR：`feat/user-task-01` -> `feat/1.0.0`。
-2.  Code Review 通过。
-3.  管理员点击 Merge 按钮时，**务必勾选 "Squash commits"**。
-
-#### 方式 B：本地命令行合并
-
-适用于且有合并权限的资深开发者：
+#### 方式 A：本地命令行合并 (推荐)
 
 ```bash
 git checkout feat/1.0.0
@@ -95,25 +87,45 @@ git commit -m "feat(login): 完成登录模块开发 (Ticket-123)"
 git push origin feat/1.0.0
 ```
 
+#### 方式 B：网页端 Pull Request 
+
+1.  在 GitLab/GitHub 发起 PR：`feat/user-task-01` -> `feat/1.0.0`。
+2.  Code Review 通过。
+3.  管理员点击 Merge 按钮时，**务必勾选 "Squash commits"**。
+
+> 按照标准流程来说，应该是在网页端走 PR 更合适，但多人协作时可能会出现 PR CodeReview 不及时导致冲突不断问题
+> 所以本文档暂时推荐 本地命令行合并 方式
+
 ---
 
 ### 第三阶段：验证与发布 (Release Phase)
 
 1.  **流水线验证**：代码进入 `feat/1.0.0` 自动触发 Dev 环境部署 -> 开发自测 -> UAT 部署 -> 产品验收。
-2.  **提测冻结**：
+2.  **确定版本与冻结 (Determine Version & Freeze)**：
 
-    ```bash
-    git checkout -b release/v1.0.0 origin/feat/1.0.0
-    ```
+    > 推荐使用 CLI 工具：选择 `阶段 2：预发布 (pre-release)`。
+    > 工具会自动读取 `package.json`，询问是 Patch/Minor/Major 升级，计算新版本号并创建 release 分支。
+
+    手动操作：
+    *   **确定新版本号**：基于当前 `package.json` 版本（如 1.0.0），决定下一版本（如 1.1.0）。
+    *   **创建发布分支**：
+        ```bash
+        # 假设决定发布 v1.1.0
+        git checkout -b release/v1.1.0 origin/feat/1.0.0
+        git push origin release/v1.1.0
+        ```
+        *注意：此时仅创建分支，暂不修改 package.json 中的版本号，交由第四阶段处理。*
 
 3.  **Bug 修复与回流 (关键)**：
-    * 在 `release/v1.0.0` 上修复 Bug。
+    *   在 `release/v1.1.0` 上修复 Bug。
     *   **回流规则**：修复完成后，必须同步回 `feat/1.0.0`，防止 Bug 在后续开发中复活。
+
+> 回流规则可选：如果一个版本已经上线，该版本的特性分支和release分支应当被清理，此时再回流已经没有任何意义。
 
     ```bash
     # 修复完 Bug 后
     git checkout feat/1.0.0
-    git merge release/v1.0.0  # 或使用 cherry-pick
+    git merge release/v1.1.0  # 或使用 cherry-pick
     git push origin feat/1.0.0
     ```
 
@@ -121,18 +133,43 @@ git push origin feat/1.0.0
 
 ### 第四阶段：上线与清理 (Prod & Cleanup)
 
-1.  **上线**：将 `release/v1.0.0` 合并入 `master`，打 Tag。
-2.  **版本清理 (必做)**：
+1.  **正式发布与生成日志 (Release Finish)**：
+    
+    > 推荐使用 CLI 工具：选择 `阶段 3：正式发布 (release-finish)`。
+    > 工具会自动执行 `standard-version`，它将完成：
+    > 1. 更新 `package.json` 版本号。
+    > 2. 生成/更新 `CHANGELOG.md`。
+    > 3. 创建 Git Tag (v1.1.0)。
+
+    手动操作：
+    ```bash
+    # 1. 确保在 release 分支 (如 release/v1.1.0)
+    git checkout release/v1.1.0
+    git pull
+
+    # 2. 生成版本号、变更日志并打 Tag (需安装 standard-version)
+    # --release-as 参数确保版本号与分支名一致
+    npx standard-version --release-as 1.1.0
+
+    # 3. 推送变更和 Tag
+    git push --follow-tags origin release/v1.1.0
+    ```
+
+2.  **合并上线**：
+    在 Git 平台发起 Pull Request：`release/v1.1.0` -> `master`。
+    审核通过后合并上线。
+
+3.  **版本清理 (必做)**：
     上线成功后，删除过程分支，标志该版本周期彻底结束。
 
     ```bash
     # 删除远程分支
-    git push origin --delete release/v1.0.0
+    git push origin --delete release/v1.1.0
     git push origin --delete feat/1.0.0
     
     # 开启下一个版本
     git checkout master
-    git checkout -b feat/1.1.0
+    git checkout -b feat/1.2.0
     ```
 
 ---
