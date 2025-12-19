@@ -105,10 +105,26 @@ async function featureSyncFinal() {
       log('正在执行 Soft Reset 压缩...', 'gray');
       // 核心魔法：软回退到公共分支点。改动全部保留在 Stage 区。
       execCommand(`git reset --soft origin/${targetBranch}`);
-      
-      const safeMsg = commitMsg.replace(/"/g, '\\"');
-      execCommand(`git commit -m "${safeMsg}"`);
-      log('✅ 自动压缩完成！碎片提交已打包为 1 个原子提交。', 'green');
+
+      // 检查是否有实际变更
+      const hasChanges = execCommand('git diff --cached --name-only', { silent: true }).trim();
+
+      if (!hasChanges) {
+        log('\n✅ 检测到内容与目标分支完全一致，无需创建新的提交。', 'green');
+        // 虽然没有变更，但我们已经重置了指针，现在分支已经和目标对齐了
+      } else {
+        const commitMsg = await askQuestion('请输入最终合并的提交信息 (建议格式: "feat: 功能描述"):');
+        if (!commitMsg.trim()) {
+          log('❌ 提交信息不能为空，操作中止。', 'red');
+          execCommand('git reset --hard ORIG_HEAD');
+          process.exit(1);
+        }
+
+        const safeMsg = commitMsg.replace(/"/g, '\\"');
+        log('正在提交原子记录...', 'gray');
+        execCommand(`git commit -m "${safeMsg}"`); 
+        log('✅ 自动压缩完成！', 'green');
+      }
     } catch (e) {
       log('❌ 压缩失败，正在尝试通过 ORIG_HEAD 恢复历史...', 'red');
       execCommand('git reset --hard ORIG_HEAD');
