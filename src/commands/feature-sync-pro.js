@@ -1,30 +1,26 @@
 /**
  * 🚀 Git 同步工具
- * 
- * 核心设计：
- * 1. 自动变基：保持历史线性。
- * 2. 软重置压缩：利用 git reset --soft 将碎片提交打包为原子提交，且 Commit ID 保持一致。
- * 3. 兼容性：支持分支延用，无需合并一次删一次。
- * 4. 安全锁：严禁在多人协作分支使用，提供故障恢复路径。
  */
 
 const { 
   log, 
   execCommand, 
-  askQuestion, 
-  askList, 
-  askConfirm, 
+  text,
+  select,
+  confirm,
+  handleCancel,
   getCurrentBranch, 
   checkGitClean, 
-  getRemoteFeatBranches 
+  getRemoteFeatBranches,
+  checkAiConfigured,
+  spinner,
+  note
 } = require('../utils');
+const aiCommitPro = require('./ai-commit-pro');
 
 async function featureSyncFinal() {
-  log('\n🌟 启动 Git 同步流程', 'cyan');
-
   // 0. 基础环境检查
   if (!checkGitClean()) {
-    log('❌ 错误：您的工作区有未处理的变更，请先 commit 或 stash。', 'red');
     process.exit(1);
   }
 
@@ -32,153 +28,195 @@ async function featureSyncFinal() {
   const currentBranch = getCurrentBranch();
   let localBranchChoices = [];
   try {
-    const output = execCommand("git for-each-ref --sort=-committerdate --format='%(refname:short)|%(committerdate:relative)|%(subject)' refs/heads/ | head -n 5", { silent: true });
-    localBranchChoices = output.split('\n').filter(l => l).map(line => {
-      const [branch, date, subject] = line.split('|');
-      return { name: `${branch.padEnd(20)} (${date}) - ${subject}`, value: branch };
-    });
+    // Fetch top 20 recent branches to ensure we have enough after filtering
+    const output = await execCommand("git for-each-ref --sort=-committerdate --format='%(refname:short)|%(committerdate:relative)|%(subject)' refs/heads/ | head -n 20", { silent: true });
+    localBranchChoices = output.split('\n')
+      .filter(l => l)
+      .map(line => {
+        const [branch, date, subject] = line.split('|');
+        return { 
+          label: `${branch.padEnd(20)} (${date}) - ${subject}`, 
+          value: branch,
+          // Store raw branch name for filtering
+          rawBranch: branch 
+        };
+      })
+      .filter(item => {
+        const b = item.rawBranch;
+        return b !== 'master' && b !== 'main' && !b.startsWith('release/');
+      })
+      .slice(0, 5) // Take top 5 after filtering
+      .map(item => ({ label: item.label, value: item.value })); // Clean up object
   } catch (e) {
-    const output = execCommand("git branch --format='%(refname:short)'", { silent: true });
-    localBranchChoices = output.split('\n').filter(b => b).map(b => ({ name: b, value: b }));
+    const output = await execCommand("git branch --format='%(refname:short)'", { silent: true });
+    localBranchChoices = output.split('\n').filter(b => b).map(b => ({ label: b, value: b }));
   }
-  localBranchChoices.push({ name: '📝 手动输入名称', value: 'manual' });
+  localBranchChoices.push({ label: '📝 手动输入名称', value: 'manual' });
 
-  let selectedBranch = await askList('请选择您的个人开发分支：', localBranchChoices, currentBranch);
-  if (selectedBranch === 'manual') selectedBranch = await askQuestion('请输入分支名称：');
+  let selectedBranch = await select({
+    message: '请选择您的个人开发分支',
+    options: localBranchChoices,
+    initialValue: currentBranch
+  });
+  handleCancel(selectedBranch);
+
+  if (selectedBranch === 'manual') {
+    selectedBranch = await text({
+      message: '请输入分支名称'
+    });
+    handleCancel(selectedBranch);
+  }
   selectedBranch = selectedBranch.trim();
 
   // 【安全锁】确认私有性
-  log('\n⚠️  风险确认', 'yellow');
-  const isPrivate = await askConfirm(`您确认 ${selectedBranch} 是【个人独占】分支吗？\n   (如果是多人共同开发的分支，压缩操作会造成他人代码冲突)`, true);
+  const isPrivate = await confirm({
+    message: `确认 ${selectedBranch} 是【个人独占】分支吗？(多人协作分支压缩会导致冲突)`,
+    initialValue: true
+  });
+  handleCancel(isPrivate);
+
   if (!isPrivate) {
-    log('中止操作。多人协作分支请使用常规 merge，不要进行压缩。', 'red');
+    log.error('中止操作。多人协作分支请使用常规 merge。');
     process.exit(0);
   }
 
   // 2. 确定目标公共分支
-  log('\n🔄 正在同步远程仓库信息...', 'blue');
-  try { execCommand('git fetch origin'); } catch (e) {}
+  const s = spinner();
+  s.start('正在同步远程仓库信息...');
+  try { await execCommand('git fetch origin', { silent: true }); } catch (e) {}
+  s.stop('远程信息同步完成');
   
-  const remoteFeatBranches = getRemoteFeatBranches(); // 假设 utils 已实现获取远程 feat 分支列表
-  remoteFeatBranches.push({ name: '📝 手动输入', value: 'manual' });
-  let targetBranch = await askList('请选择目标公共特性分支 (Target)：', remoteFeatBranches, remoteFeatBranches[0]?.value);
-  if (targetBranch === 'manual') targetBranch = await askQuestion('请输入目标分支 (如 feat/1.0.0)：');
+  const remoteFeatBranches = getRemoteFeatBranches();
+  remoteFeatBranches.push({ label: '📝 手动输入', value: 'manual' });
+  
+  let targetBranch = await select({
+    message: '请选择目标公共特性分支 (Target)',
+    options: remoteFeatBranches,
+    initialValue: remoteFeatBranches[0]?.value
+  });
+  handleCancel(targetBranch);
+
+  if (targetBranch === 'manual') {
+    targetBranch = await text({
+      message: '请输入目标分支 (如 feat/1.0.0)'
+    });
+    handleCancel(targetBranch);
+  }
   targetBranch = targetBranch.trim();
 
   // 切换到开发分支
   if (getCurrentBranch() !== selectedBranch) {
-    execCommand(`git checkout ${selectedBranch}`);
+    await execCommand(`git checkout ${selectedBranch}`, { silent: true });
   }
 
-  // 3. 步骤 1：变基同步（解决冲突的第一道防线）
-  log(`\n🔄 步骤 1: 正在从 origin/${targetBranch} 获取最新代码并变基...`, 'blue');
+  // 3. 步骤 1：变基同步
+  s.start(`正在从 origin/${targetBranch} 变基...`);
   try {
-    execCommand(`git fetch origin ${targetBranch}`);
-    // 自动变基，确保开发分支是基于公共分支最新点检出的
-    execCommand(`git rebase origin/${targetBranch}`);
+    await execCommand(`git fetch origin ${targetBranch}`, { silent: true });
+    await execCommand(`git rebase origin/${targetBranch}`, { silent: true });
+    s.stop('变基完成');
   } catch (error) {
-    log('\n❌ 变基冲突！', 'red');
-    log('您的代码与公共分支存在逻辑冲突，请手动解决：', 'yellow');
-    log('1. 在编辑器中解冲突 -> 2. git add . -> 3. git rebase --continue');
-    log('完成后请重新运行此脚本。', 'cyan');
+    s.stop('变基冲突', 1);
+    log.warn('您的代码与公共分支存在逻辑冲突，请手动解决：\n1. 解冲突 -> 2. git add . -> 3. git rebase --continue', '⚠️  冲突处理');
     process.exit(0);
   }
 
   // 4. 步骤 2：智能历史压缩
-  const aheadCount = parseInt(execCommand(`git rev-list --count origin/${targetBranch}..${selectedBranch}`, { silent: true }).trim());
+  const aheadCount = parseInt((await execCommand(`git rev-list --count origin/${targetBranch}..${selectedBranch}`, { silent: true })).trim());
   
   if (aheadCount === 0) {
-    log('\n✅ 您的分支已是最新，无须同步。', 'green');
+    log.success('✅ 分支已是最新，无须同步。');
     return;
   }
 
   if (aheadCount > 1) {
-    log(`\n📦 步骤 2: 检测到 ${aheadCount} 个提交记录，准备进行自动打包...`, 'yellow');
-    const commitMsg = await askQuestion('请输入合并后的提交信息 (建议格式: "feat: 功能描述"):');
+    log.warn(`📦 检测到 ${aheadCount} 个提交记录，准备打包...`);
     
-    if (!commitMsg.trim()) {
-      log('❌ 提交信息不能为空，操作中止。', 'red');
-      process.exit(1);
-    }
-
     try {
-      log('正在执行 Soft Reset 压缩...', 'gray');
-      // 核心魔法：软回退到公共分支点。改动全部保留在 Stage 区。
-      execCommand(`git reset --soft origin/${targetBranch}`);
+      await execCommand(`git reset --soft origin/${targetBranch}`, { silent: true });
 
-      // 检查是否有实际变更
-      const hasChanges = execCommand('git diff --cached --name-only', { silent: true }).trim();
+      const hasChanges = (await execCommand('git diff --cached --name-only', { silent: true })).trim();
 
       if (!hasChanges) {
-        log('\n✅ 检测到内容与目标分支完全一致，无需创建新的提交。', 'green');
-        // 虽然没有变更，但我们已经重置了指针，现在分支已经和目标对齐了
+        log.success('✅ 内容一致，无需新提交。');
       } else {
-        const commitMsg = await askQuestion('请输入最终合并的提交信息 (建议格式: "feat: 功能描述"):');
-        if (!commitMsg.trim()) {
-          log('❌ 提交信息不能为空，操作中止。', 'red');
-          execCommand('git reset --hard ORIG_HEAD');
-          process.exit(1);
+        let committed = false;
+        
+        // AI 提交介入
+        if (checkAiConfigured()) {
+          const aiResult = await aiCommitPro();
+          if (aiResult === 'committed') {
+             const hasChangesNow = (await execCommand('git diff --cached --name-only', { silent: true })).trim();
+             if (!hasChangesNow) {
+                log.success('✅ AI 已完成提交。');
+                committed = true;
+             }
+          }
         }
 
-        const safeMsg = commitMsg.replace(/"/g, '\\"');
-        log('正在提交原子记录...', 'gray');
-        execCommand(`git commit -m "${safeMsg}"`); 
-        log('✅ 自动压缩完成！', 'green');
+        if (!committed) {
+          const commitMsg = await text({
+            message: '请输入最终提交信息 (如 "feat: 功能描述")'
+          });
+          handleCancel(commitMsg);
+
+          if (!commitMsg.trim()) {
+            log.error('❌ 提交信息不能为空，操作中止。');
+            await execCommand('git reset --hard ORIG_HEAD', { silent: true });
+            process.exit(1);
+          }
+
+          const safeMsg = commitMsg.replace(/"/g, '\\"');
+          await execCommand(`git commit -m "${safeMsg}"`, { silent: true }); 
+          log.success('✅ 自动压缩完成！');
+          committed = true;
+        }
       }
     } catch (e) {
-      log('❌ 压缩失败，正在尝试通过 ORIG_HEAD 恢复历史...', 'red');
-      execCommand('git reset --hard ORIG_HEAD');
+      log.error(`❌ 压缩失败: ${e.message}`);
+      log.error('正在尝试通过 ORIG_HEAD 恢复历史...');
+      await execCommand('git reset --hard ORIG_HEAD', { silent: true });
       process.exit(1);
     }
   } else {
-    log('\n✅ 只有 1 个提交记录，无需压缩。', 'green');
+    log.success('✅ 只有 1 个提交记录，无需压缩。');
   }
 
   // 5. 步骤 3：合并入公共分支
-  log(`\n🤝 步骤 3: 正在合并到公共分支 ${targetBranch}...`, 'blue');
+  s.start(`正在合并到 ${targetBranch}...`);
   const userBranch = selectedBranch;
   try {
-    // 切换到目标分支
-    execCommand(`git checkout ${targetBranch}`);
-    // 同步远程目标分支（以防在执行脚本期间有人提交了代码）
-    execCommand(`git pull origin ${targetBranch}`);
-
-    // Fast-forward 合并
-    log(`执行 Fast-forward 合并...`, 'gray');
-    execCommand(`git merge ${userBranch}`);
-
-    // 推送远程
-    log(`正在推送 origin/${targetBranch}...`, 'gray');
-    execCommand(`git push origin ${targetBranch}`);
+    await execCommand(`git checkout ${targetBranch}`, { silent: true });
+    await execCommand(`git pull origin ${targetBranch}`, { silent: true });
+    await execCommand(`git merge ${userBranch}`, { silent: true });
+    s.stop('合并完成');
+    
+    s.start(`正在推送 origin/${targetBranch}...`);
+    await execCommand(`git push origin ${targetBranch}`, { silent: true });
+    s.stop('推送完成');
 
     // 6. 步骤 4：恢复开发环境
-    log(`\n🔄 步骤 4: 切换回开发分支 ${userBranch}...`, 'blue');
-    execCommand(`git checkout ${userBranch}`);
+    await execCommand(`git checkout ${userBranch}`, { silent: true });
 
-    log('\n✨✨ 同步全链路完成！ ✨✨', 'green');
-    log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'gray');
-    log(`✅ 公共历史：保持线性，增加了 1 条原子提交。`, 'cyan');
-    log(`✅ 本地开发：分支 [${userBranch}] 已就绪，可直接继续开发。`, 'cyan');
+    log.success(`公共历史：保持线性，增加 1 条原子提交。\n本地分支 [${userBranch}] 已就绪。`, '✅ 同步完成');
     
     // 【重要提示】关于远程个人分支的同步
     let hasRemote = false;
     try {
-      // 检查是否有上游分支，silent 模式防止报错信息直接打印
-      execCommand(`git rev-parse --abbrev-ref ${userBranch}@{u}`, { silent: true });
+      await execCommand(`git rev-parse --abbrev-ref ${userBranch}@{u}`, { silent: true });
       hasRemote = true;
     } catch (e) {
-      hasRemote = false; // 说明没有上游分支，直接跳过提示
+      hasRemote = false;
     }
 
     if (hasRemote) {
-      log(`\n💡 提示：检测到您有远程个人分支。由于本地历史已压缩，`, 'yellow');
-      log(`   下次推送个人分支请使用：git push origin ${userBranch} --force-with-lease`, 'yellow');
+      log.info(`检测到远程个人分支。\n下次推送请使用：git push origin ${userBranch} --force-with-lease`, '💡 提示');
     }
-    log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`, 'gray');
 
   } catch (e) {
-    log(`\n❌ 合并/推送阶段发生异常: ${e.message}`, 'red');
-    log('您的代码已在本地分支压缩成功，您可以手动执行后续合并。', 'yellow');
+    s.stop('操作异常', 1);
+    log.error(`❌ 异常: ${e.message}`);
+    log.warn('代码已在本地压缩，请手动处理后续合并。');
     process.exit(1);
   }
 }

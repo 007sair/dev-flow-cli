@@ -1,16 +1,47 @@
 const chalk = require('chalk');
 const execa = require('execa');
-const inquirer = require('inquirer');
+const { 
+  intro, 
+  outro, 
+  text, 
+  select, 
+  confirm, 
+  password, 
+  spinner, 
+  log,
+  isCancel,
+  cancel,
+  note
+} = require('@clack/prompts');
 
-const log = (msg, color = 'white') => {
-  if (chalk[color]) {
-    console.log(chalk[color](msg));
-  } else {
-    console.log(msg);
+// 统一处理取消操作
+const handleCancel = (value) => {
+  if (isCancel(value)) {
+    cancel('操作已取消');
+    process.exit(0);
+  }
+  return value;
+};
+
+// Async execution for spinners
+const execCommand = async (command, options = {}) => {
+  try {
+    const { stdout } = await execa.command(command, {
+      shell: true,
+      stdio: options.silent ? 'pipe' : 'inherit',
+      ...options,
+    });
+    return stdout;
+  } catch (error) {
+    if (!options.silent) {
+      log.error(error.message);
+    }
+    throw error;
   }
 };
 
-const execCommand = (command, options = {}) => {
+// Sync execution for quick checks
+const execCommandSync = (command, options = {}) => {
   try {
     const { stdout } = execa.commandSync(command, {
       shell: true,
@@ -20,52 +51,15 @@ const execCommand = (command, options = {}) => {
     return stdout;
   } catch (error) {
     if (!options.silent) {
-      log(`命令执行失败：${command}`, 'red');
-      log(error.message, 'red');
+      log.error(error.message);
     }
     throw error;
   }
 };
 
-const askQuestion = async (message) => {
-  const { answer } = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'answer',
-      message,
-    },
-  ]);
-  return answer;
-};
-
-const askList = async (message, choices, defaultVal) => {
-  const { answer } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'answer',
-      message,
-      choices,
-      default: defaultVal,
-    },
-  ]);
-  return answer;
-};
-
-const askConfirm = async (message, defaultVal = true) => {
-  const { answer } = await inquirer.prompt([
-    {
-      type: 'confirm',
-      name: 'answer',
-      message,
-      default: defaultVal,
-    },
-  ]);
-  return answer;
-};
-
 const getCurrentBranch = () => {
   try {
-    return execCommand('git branch --show-current', { silent: true }).trim();
+    return execCommandSync('git branch --show-current', { silent: true }).trim();
   } catch (e) {
     return null;
   }
@@ -73,10 +67,9 @@ const getCurrentBranch = () => {
 
 const checkGitClean = () => {
   try {
-    const status = execCommand('git status --porcelain', { silent: true });
+    const status = execCommandSync('git status --porcelain', { silent: true });
     if (status.trim()) {
-      log('❌ 工作目录不干净。请提交或暂存更改。', 'red');
-      log(status, 'yellow');
+      log.error('工作目录不干净。请提交或暂存更改。');
       return false;
     }
     return true;
@@ -87,30 +80,46 @@ const checkGitClean = () => {
 
 const getRemoteFeatBranches = () => {
   try {
-    const output = execCommand("git for-each-ref --sort=-committerdate --format='%(refname:short)|%(committerdate:relative)|%(subject)' refs/remotes/origin/feat/ | head -n 5", { silent: true });
+    // List all remote branches
+    const output = execCommandSync("git branch -r", { silent: true });
     return output.split('\n')
-      .map(line => line.trim())
-      .filter(line => line)
-      .map(line => {
-        const [fullBranch, date, subject] = line.split('|');
-        const branchName = fullBranch.replace('origin/', '');
-        return {
-          name: `${branchName.padEnd(20)} (${date}) - ${subject}`,
-          value: branchName
-        };
+      .map(b => b.trim())
+      .filter(b => b)
+      .filter(b => !b.includes('HEAD') && !b.includes('origin/master') && !b.includes('origin/main') && !b.includes('origin/release'))
+      .map(b => {
+        const name = b.replace('origin/', '');
+        return { label: name, value: name };
       });
   } catch (e) {
     return [];
   }
 };
 
+const checkAiConfigured = () => {
+  try {
+    const output = execCommandSync('aicommits config', { silent: true });
+    return output.includes('API Key');
+  } catch (e) {
+    return false;
+  }
+};
+
 module.exports = {
+  intro,
+  outro,
+  text,
+  select,
+  confirm,
+  password,
+  spinner,
   log,
+  note,
+  handleCancel,
   execCommand,
-  askQuestion,
-  askList,
-  askConfirm,
+  execCommandSync,
   getCurrentBranch,
   checkGitClean,
   getRemoteFeatBranches,
+  checkAiConfigured,
+  chalk // exporting chalk just in case
 };

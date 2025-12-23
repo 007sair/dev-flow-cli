@@ -36,10 +36,12 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
+    "@clack/prompts": "^0.11.0",
+    "aicommits": "^2.0.0-develop.2",
     "chalk": "^4.1.2",
+    "execa": "^5.1.1",
     "inquirer": "^8.2.5",
     "semver": "^7.5.4",
-    "execa": "^5.1.1",
     "standard-version": "^9.5.0"
   }
 }

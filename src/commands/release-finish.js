@@ -1,16 +1,20 @@
-const { log, execCommand, askList } = require('../utils');
+const { log, execCommand, select, handleCancel, spinner, note } = require('../utils');
 
 async function releaseFinish() {
-  log('\n🚀 开始阶段 3：正式发布', 'cyan');
-
   // 1. List release branches
-  log('获取远程分支...', 'gray');
-  execCommand('git fetch --all');
+  const s = spinner();
+  s.start('获取远程 release 分支...');
+  try {
+    await execCommand('git fetch --all', { silent: true });
+    s.stop('分支信息同步完成');
+  } catch (e) {
+    s.stop('分支信息同步失败', 1);
+  }
   
   // Get remote release branches
   let branches = [];
   try {
-    const branchesOutput = execCommand('git branch -r | grep "origin/release/"', { silent: true });
+    const branchesOutput = (await execCommand('git branch -r | grep "origin/release/"', { silent: true }));
     if (branchesOutput) {
       branches = branchesOutput.split('\n')
         .map(b => b.trim())
@@ -18,52 +22,61 @@ async function releaseFinish() {
         .map(b => b.replace('origin/', ''));
     }
   } catch (e) {
-    // grep returns exit code 1 if no matches found, which execCommand throws
-    log('未找到远程 release 分支。', 'yellow');
+    // grep returns exit code 1 if no matches found
   }
 
   if (branches.length === 0) {
-    log('远程未找到以 release/ 开头的分支。', 'red');
+    log.error('❌ 远程未找到以 release/ 开头的分支。');
     process.exit(1);
   }
 
   // 2. Select Branch
-  const selectedBranch = await askList('选择要完成发布的 release 分支：', branches);
+  const selectedBranch = await select({
+    message: '选择要完成发布的 release 分支',
+    options: branches.map(b => ({ label: b, value: b }))
+  });
+  handleCancel(selectedBranch);
 
   // 3. Checkout
-  log(`\n🔀 检出 ${selectedBranch}...`, 'blue');
-  execCommand(`git checkout ${selectedBranch}`);
-  execCommand(`git pull origin ${selectedBranch}`);
+  s.start(`检出 ${selectedBranch}...`);
+  try {
+    await execCommand(`git checkout ${selectedBranch}`, { silent: true });
+    await execCommand(`git pull origin ${selectedBranch}`, { silent: true });
+    s.stop(`已检出 ${selectedBranch}`);
+  } catch(e) {
+    s.stop('检出失败', 1);
+    throw e;
+  }
 
   // 4. Extract version
-  // Expected format: release/v1.2.3
   const versionMatch = selectedBranch.match(/release\/v?(\d+\.\d+\.\d+.*)/);
   if (!versionMatch) {
     throw new Error(`无法从分支名解析版本号 ${selectedBranch}`);
   }
   const version = versionMatch[1];
-  log(`检测到版本：${version}`, 'yellow');
-
+  
   // 5. Standard Version
-  log(`\n📦 运行 standard-version (release-as ${version})...`, 'blue');
-  // standard-version bumps package.json, changelog, commit, tag
-  execCommand(`npx standard-version --release-as ${version}`);
+  s.start(`运行 standard-version (v${version})...`);
+  try {
+    // standard-version bumps package.json, changelog, commit, tag
+    await execCommand(`npx standard-version --release-as ${version}`, { silent: true });
+    s.stop('版本发布完成');
+  } catch (e) {
+    s.stop('Standard-version 运行失败', 1);
+    throw e;
+  }
 
   // 6. Push
-  log('\n📤 推送变更和标签...', 'blue');
-  execCommand(`git push --follow-tags origin ${selectedBranch}`);
+  s.start('推送变更和标签...');
+  try {
+    await execCommand(`git push --follow-tags origin ${selectedBranch}`, { silent: true });
+    s.stop('推送成功');
+  } catch (e) {
+    s.stop('推送失败', 1);
+    throw e;
+  }
 
-  log('\n✅ 发布分支已准备就绪并打标。', 'green');
-  log(`👉 现在前往 Git 平台创建 Pull Request：`, 'green');
-  log(`   ${selectedBranch} -> master`, 'cyan');
-
-  log('\n⚠️  重要提示：上线完成后，请记得清理分支！', 'yellow');
-  log(`   1. 删除公共特性分支 (feat/v${version})`, 'gray');
-  log(`   2. 删除发布分支 (${selectedBranch})`, 'gray');
-  log('   保持仓库整洁是个好习惯。', 'gray');
-  
-  // Optional: Delete branch after merge?
-  // Usually done after merge in the web UI.
+  log.success(`分支：${selectedBranch}\n操作：\n1. 请创建 Pull Request: ${selectedBranch} -> master\n2. 合并后记得删除 ${selectedBranch} 和对应 feat 分支`, '✅ 发布准备就绪');
 }
 
 module.exports = releaseFinish;

@@ -1,30 +1,41 @@
-const { log, askList } = require('./utils');
-const featureSync = require('./commands/feature-sync');
+const { log, select, execCommandSync, intro, outro, handleCancel } = require('./utils');
 const preRelease = require('./commands/pre-release');
 const releaseFinish = require('./commands/release-finish');
 const featureSyncPro = require('./commands/feature-sync-pro');
+const aiCommitPro = require('./commands/ai-commit-pro');
+const { aiConfig, showConfig } = require('./commands/ai-config');
 const guide = require('./commands/guide');
 const pkg = require('../package.json');
+const chalk = require('chalk');
 
 function showHelp() {
-  log(`\n🌊 Dev Flow CLI v${pkg.version}`, 'cyan');
-  log('\nUsage: flow [command] [options]', 'white');
+  log.info(`🌊 Dev Flow CLI v${pkg.version}`);
+  log.warn('使用方法:');
+  log.message('  flow [command] [options]');
   
-  log('\nOptions:', 'yellow');
-  log('  -v, --version   查看当前版本', 'white');
-  log('  -h, --help      查看帮助信息', 'white');
+  log.warn('选项:');
+  log.message('  -v, --version       查看当前版本');
+  log.message('  -h, --help          查看帮助信息');
 
-  log('\nCommands:', 'yellow');
-  log('  guide           查看详细的阶段说明', 'white');
+  log.warn('核心命令:');
+  log.message('  ai                  AI 智能提交 (交互式生成)');
+  log.message('  ai setup            配置 AI 助手 (API Key, 语言, 格式等)');
+  log.message('  ai config           查看当前 AI 配置');
   
-  log('\n💡 提示：运行 flow 命令开始交互式流程。\n', 'gray');
+  log.warn('交互式流程:');
+  log.message('  flow                启动交互式工作流向导 (推荐)');
+  
+  log.warn('文档:');
+  log.message('  guide               查看详细的规范说明');
+  
+  log.message(chalk.gray('\n💡 提示：支持直接运行 flow ai -c -g 3 等 aicommits 原生参数'));
 }
 
 async function main() {
   const args = process.argv.slice(2);
 
   if (args.includes('--version') || args.includes('-v')) {
-    log(`v${pkg.version}`, 'green');
+    console.log(`v${pkg.version}`);
     process.exit(0);
   }
 
@@ -38,23 +49,59 @@ async function main() {
     process.exit(0);
   }
 
-  log('\n🌊 Dev Flow CLI 开发流程工具', 'cyan');
-  log('基于团队规范自动化您的开发工作流。', 'gray');
-  log('\n💡 提示：', 'yellow');
-  log('   • 使用 flow --help    查看帮助', 'gray');
-  log('   • 使用 control + c    退出流程\n', 'gray');
+  if (args[0] === 'ai') {
+    const subCmd = args[1];
 
-  const choice = await askList('请选择当前工作流阶段：', [
-    { name: '阶段 1：特性同步 (将个人分支合并到公共特性分支)', value: 'feature-sync-pro' },
-    { name: '阶段 2：预发布 (从公共特性分支创建 Release 分支)', value: 'pre-release' },
-    { name: '阶段 3：正式发布 (将 Release 分支合并到 Master 并发版)', value: 'release-finish' },
-  ]);
+    // 优先拦截 setup 和 config
+    if (subCmd === 'setup') {
+      await aiConfig();
+      process.exit(0);
+    }
+    
+    if (subCmd === 'config') {
+      showConfig();
+      process.exit(0);
+    }
+
+    // 收集 flow ai 之后的所有参数
+    const subArgs = args.slice(1).join(' ');
+    
+    // 如果有参数，直接透传给 aicommits
+    // 这样可以支持 flow ai -c -g 3 这样的用法
+    if (subArgs.length > 0) {
+      try {
+        execCommandSync(`aicommits ${subArgs}`);
+      } catch (e) {
+        process.exit(1);
+      }
+    } else {
+      // 无参数时，执行默认的 aiCommitPro 流程
+      await aiCommitPro();
+    }
+    process.exit(0);
+  }
+
+  // 交互式流程开始
+  console.clear();
+  intro(chalk.bgCyan(chalk.black(' Dev Flow CLI ')));
+
+  const choice = await select({
+    message: '请选择当前工作流阶段',
+    options: [
+      { label: 'AI 智能提交', value: 'ai-commit', hint: '生成 Commit Message' },
+      { label: '特性同步', value: 'feature-sync-pro', hint: '个人分支 -> 公共特性分支' },
+      { label: '预发布', value: 'pre-release', hint: '特性分支 -> Release 分支' },
+      { label: '正式发布', value: 'release-finish', hint: 'Release -> Master' },
+      { label: 'AI 配置', value: 'ai-config', hint: '设置 API Key 等' },
+    ]
+  });
+  handleCancel(choice);
 
   try {
     switch (choice) {
-      // case 'feature-sync':
-      //   await featureSync();
-      //   break;
+      case 'ai-commit':
+        await aiCommitPro();
+        break;
       case 'feature-sync-pro':
         await featureSyncPro();
         break;  
@@ -64,9 +111,14 @@ async function main() {
       case 'release-finish':
         await releaseFinish();
         break;
+      case 'ai-config':
+        await aiConfig();
+        break;
     }
+    
+    outro('操作完成 ✨');
   } catch (error) {
-    log(`\n❌ 错误：${error.message}`, 'red');
+    log.error(`❌ 错误：${error.message}`);
     process.exit(1);
   }
 }

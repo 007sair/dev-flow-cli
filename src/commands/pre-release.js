@@ -1,7 +1,18 @@
 const fs = require('fs');
 const path = require('path');
 const semver = require('semver');
-const { log, execCommand, askList, askQuestion, askConfirm, checkGitClean, getRemoteFeatBranches } = require('../utils');
+const { 
+  log, 
+  execCommand, 
+  select, 
+  text, 
+  confirm, 
+  handleCancel,
+  checkGitClean, 
+  getRemoteFeatBranches, 
+  spinner, 
+  note 
+} = require('../utils');
 
 function getPackageJson() {
   const pPath = path.join(process.cwd(), 'package.json');
@@ -10,66 +21,82 @@ function getPackageJson() {
 }
 
 async function preRelease() {
-  log('\n🚀 开始阶段 2：预发布', 'cyan');
-
   // 0. 检查工作区状态
   if (!checkGitClean()) {
     process.exit(1);
   }
 
   // 1. 同步并选择公共特性分支
-  log('🔄 同步远程分支信息...', 'blue');
+  const s = spinner();
+  s.start('同步远程分支信息...');
   try {
-    execCommand('git fetch origin');
+    await execCommand('git fetch origin', { silent: true });
+    s.stop('同步完成');
   } catch (e) {
-    log('Fetch 失败 (可能是网络问题)，继续使用本地缓存...', 'yellow');
+    s.stop('同步失败 (继续使用本地缓存)', 1);
   }
 
-  const remoteFeatChoices = getRemoteFeatBranches();
-  // 添加手动输入选项
-  remoteFeatChoices.push({ name: '📝 手动输入', value: 'manual' });
+  const remoteFeatChoices = getRemoteFeatBranches().map(b => ({
+    label: b.label || b.name, // Adapter if getRemoteFeatBranches returns name/value
+    value: b.value
+  }));
+  
+  remoteFeatChoices.push({ label: '📝 手动输入', value: 'manual' });
 
-  // 默认选中第一个（最新的）
   const defaultTarget = remoteFeatChoices.length > 1 ? remoteFeatChoices[0].value : null;
-
-  let selectedBranch = await askList('请选择要发布的公共特性分支：', remoteFeatChoices, defaultTarget);
+  let selectedBranch = await select({
+    message: '请选择要发布的公共特性分支',
+    options: remoteFeatChoices,
+    initialValue: defaultTarget
+  });
+  handleCancel(selectedBranch);
 
   if (selectedBranch === 'manual') {
-    selectedBranch = await askQuestion('请输入公共特性分支 (例如 feat/1.0.0)：');
+    selectedBranch = await text({
+      message: '请输入公共特性分支 (例如 feat/1.0.0)'
+    });
+    handleCancel(selectedBranch);
   }
   selectedBranch = selectedBranch.trim();
   if (!selectedBranch) throw new Error('未选择分支');
 
-  // 2. 检出选中的特性分支以读取版本号和运行检查
-  log(`\n🔀 正在检出 ${selectedBranch}...`, 'blue');
+  // 2. 检出选中的特性分支
+  s.start(`正在检出 ${selectedBranch}...`);
   try {
-    // 检查本地是否存在
-    const localExists = execCommand(`git branch --list ${selectedBranch}`, { silent: true }).trim();
+    const localExists = (await execCommand(`git branch --list ${selectedBranch}`, { silent: true })).trim();
     if (localExists) {
-      execCommand(`git checkout ${selectedBranch}`);
-      execCommand(`git pull origin ${selectedBranch}`); // 确保最新
+      await execCommand(`git checkout ${selectedBranch}`, { silent: true });
+      await execCommand(`git pull origin ${selectedBranch}`, { silent: true });
     } else {
-      execCommand(`git checkout -b ${selectedBranch} origin/${selectedBranch}`);
+      await execCommand(`git checkout -b ${selectedBranch} origin/${selectedBranch}`, { silent: true });
     }
+    s.stop(`已检出 ${selectedBranch}`);
   } catch (e) {
+    s.stop('检出失败', 1);
     throw new Error(`检出分支失败: ${e.message}`);
   }
 
   // 3. Determine Version
   const pkg = getPackageJson();
   const currentVersion = pkg.version;
-  log(`\n当前版本：${currentVersion}`, 'yellow');
-
-  const releaseType = await askList('选择发布类型：', [
-    { name: `Patch (补丁) (${semver.inc(currentVersion, 'patch')})`, value: 'patch' },
-    { name: `Minor (功能) (${semver.inc(currentVersion, 'minor')})`, value: 'minor' },
-    { name: `Major (主版本) (${semver.inc(currentVersion, 'major')})`, value: 'major' },
-    { name: '自定义', value: 'custom' },
-  ]);
+  
+  const releaseType = await select({
+    message: `当前版本: ${currentVersion}，请选择发布类型`,
+    options: [
+      { label: `Patch (补丁) (${semver.inc(currentVersion, 'patch')})`, value: 'patch' },
+      { label: `Minor (功能) (${semver.inc(currentVersion, 'minor')})`, value: 'minor' },
+      { label: `Major (主版本) (${semver.inc(currentVersion, 'major')})`, value: 'major' },
+      { label: '自定义', value: 'custom' },
+    ]
+  });
+  handleCancel(releaseType);
 
   let nextVersion;
   if (releaseType === 'custom') {
-    nextVersion = await askQuestion('请输入自定义版本号：');
+    nextVersion = await text({
+      message: '请输入自定义版本号'
+    });
+    handleCancel(nextVersion);
   } else {
     nextVersion = semver.inc(currentVersion, releaseType);
   }
@@ -82,51 +109,53 @@ async function preRelease() {
   
   // Check for conflicting local 'release' branch
   try {
-    const hasReleaseBranch = execCommand('git branch --list release', { silent: true }).trim();
+    const hasReleaseBranch = (await execCommand('git branch --list release', { silent: true })).trim();
     if (hasReleaseBranch) {
-      log('\n⚠️  检测到本地存在名为 "release" 的分支。', 'yellow');
-      log('这会导致无法创建 "release/v..." 格式的分支 (Git 无法同时拥有名为 "release" 的文件和 "release/" 的目录)。', 'yellow');
+      log.warn('检测到本地存在名为 "release" 的分支，这会导致创建 release/v... 分支失败。', '⚠️ 分支冲突');
       
-      const action = await askList('请选择如何处理冲突分支 "release"：', [
-        { name: '重命名为 release-backup (推荐)', value: 'rename' },
-        { name: '删除 (确保不需要)', value: 'delete' },
-        { name: '取消操作', value: 'cancel' }
-      ]);
+      const action = await select({
+        message: '请选择如何处理冲突分支 "release"',
+        options: [
+          { label: '重命名为 release-backup (推荐)', value: 'rename' },
+          { label: '删除 (确保不需要)', value: 'delete' },
+          { label: '取消操作', value: 'cancel' }
+        ]
+      });
+      handleCancel(action);
 
       if (action === 'cancel') {
         process.exit(0);
       } else if (action === 'rename') {
-        execCommand('git branch -m release release-backup');
-        log('✅ 已重命名为 release-backup', 'green');
+        await execCommand('git branch -m release release-backup', { silent: true });
+        log.success('✅ 已重命名为 release-backup');
       } else if (action === 'delete') {
-        execCommand('git branch -D release');
-        log('🗑️  已删除 release 分支', 'green');
+        await execCommand('git branch -D release', { silent: true });
+        log.success('🗑️  已删除 release 分支');
       }
     }
   } catch (e) {
-    // Ignore error if check fails, git checkout -b will catch it later
+    // Ignore
   }
 
   // 5. Create Release Branch
-  const confirmed = await askConfirm(`基于 ${selectedBranch} 创建分支 ${releaseBranchName} 并推送？`);
-  if (!confirmed) process.exit(0);
-
-  log(`\n🌿 正在创建分支 ${releaseBranchName}...`, 'blue');
-  try {
-    execCommand(`git checkout -b ${releaseBranchName}`);
-  } catch (e) {
-    throw new Error(`创建分支失败: ${e.message}`);
-  }
+  const isConfirmed = await confirm({
+    message: `即将基于 ${selectedBranch} 创建分支 ${releaseBranchName} 并推送，确认吗？`
+  });
+  handleCancel(isConfirmed);
   
-  log(`📤 正在推送 ${releaseBranchName} 到远程...`, 'blue');
+  if (!isConfirmed) process.exit(0);
+
+  s.start(`正在创建并推送 ${releaseBranchName}...`);
   try {
-    execCommand(`git push origin ${releaseBranchName}`);
+    await execCommand(`git checkout -b ${releaseBranchName}`, { silent: true });
+    await execCommand(`git push origin ${releaseBranchName}`, { silent: true });
+    s.stop(`分支 ${releaseBranchName} 创建并推送成功`);
   } catch (e) {
-    throw new Error(`推送分支失败: ${e.message}`);
+    s.stop('创建或推送失败', 1);
+    throw new Error(`操作失败: ${e.message}`);
   }
 
-  log(`\n✅ 预发布分支已创建：${releaseBranchName}`, 'green');
-  log('下一步：部署到预发布环境 (通常由 CI/CD 自动完成)。', 'gray');
+  log.success(`分支：${releaseBranchName}\n下一步：部署到预发布环境 (通常由 CI/CD 自动完成)。`, '✅ 预发布分支就绪');
 }
 
 module.exports = preRelease;
