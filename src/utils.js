@@ -1,5 +1,9 @@
 const chalk = require('chalk');
 const execa = require('execa');
+const inquirer = require('inquirer');
+inquirer.registerPrompt('autocomplete', require('inquirer-autocomplete-prompt'));
+const Fuse = require('fuse.js');
+
 const { 
   intro, 
   outro, 
@@ -104,11 +108,57 @@ const checkAiConfigured = () => {
   }
 };
 
+const fuzzySelect = async ({ message, options, initialValue }) => {
+  // Transform clack options to inquirer options
+  const inquirerOptions = options.map(o => ({
+    name: o.label || o.value,
+    value: o.value,
+    short: o.label || o.value
+  }));
+
+  const fuse = new Fuse(inquirerOptions, {
+    keys: ['name', 'value'],
+    threshold: 0.4
+  });
+
+  try {
+    const { result } = await inquirer.prompt([
+      {
+        type: 'autocomplete',
+        name: 'result',
+        message: message,
+        source: async (answersSoFar, input) => {
+          if (!input) {
+            return inquirerOptions;
+          }
+          return fuse.search(input).map(r => r.item);
+        },
+        pageSize: 10
+      }
+    ]);
+    return result;
+  } catch (error) {
+    if (error.isTtyError) {
+      // Prompt couldn't be rendered in the current environment
+      log.error('Terminal not supported');
+    } else {
+      // User cancelled or other error
+      // Inquirer doesn't have a clean "cancel" return like clack
+      // We'll treat it as exit or rethrow
+      if (error.message.includes('User force closed')) {
+        process.exit(0);
+      }
+      throw error;
+    }
+  }
+};
+
 module.exports = {
   intro,
   outro,
   text,
   select,
+  fuzzySelect,
   confirm,
   password,
   spinner,

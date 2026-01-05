@@ -6,7 +6,6 @@ const {
   log, 
   execCommand, 
   text,
-  select,
   confirm,
   handleCancel,
   getCurrentBranch, 
@@ -14,7 +13,7 @@ const {
   getRemoteFeatBranches,
   checkAiConfigured,
   spinner,
-  note
+  fuzzySelect
 } = require('../utils');
 const aiCommitPro = require('./ai-commit-pro');
 
@@ -28,8 +27,8 @@ async function featureSyncFinal() {
   const currentBranch = getCurrentBranch();
   let localBranchChoices = [];
   try {
-    // Fetch top 20 recent branches to ensure we have enough after filtering
-    const output = await execCommand("git for-each-ref --sort=-committerdate --format='%(refname:short)|%(committerdate:relative)|%(subject)' refs/heads/ | head -n 20", { silent: true });
+    // Fetch top 50 recent branches to ensure we have enough for fuzzy search
+    const output = await execCommand("git for-each-ref --sort=-committerdate --format='%(refname:short)|%(committerdate:relative)|%(subject)' refs/heads/ | head -n 50", { silent: true });
     localBranchChoices = output.split('\n')
       .filter(l => l)
       .map(line => {
@@ -45,7 +44,6 @@ async function featureSyncFinal() {
         const b = item.rawBranch;
         return b !== 'master' && b !== 'main' && !b.startsWith('release/');
       })
-      .slice(0, 5) // Take top 5 after filtering
       .map(item => ({ label: item.label, value: item.value })); // Clean up object
   } catch (e) {
     const output = await execCommand("git branch --format='%(refname:short)'", { silent: true });
@@ -53,7 +51,7 @@ async function featureSyncFinal() {
   }
   localBranchChoices.push({ label: '📝 手动输入名称', value: 'manual' });
 
-  let selectedBranch = await select({
+  let selectedBranch = await fuzzySelect({
     message: '请选择您的个人开发分支',
     options: localBranchChoices,
     initialValue: currentBranch
@@ -89,7 +87,7 @@ async function featureSyncFinal() {
   const remoteFeatBranches = getRemoteFeatBranches();
   remoteFeatBranches.push({ label: '📝 手动输入', value: 'manual' });
   
-  let targetBranch = await select({
+  let targetBranch = await fuzzySelect({
     message: '请选择目标公共特性分支 (Target)',
     options: remoteFeatBranches,
     initialValue: remoteFeatBranches[0]?.value
