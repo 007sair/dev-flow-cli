@@ -11,7 +11,6 @@ const {
   checkGitClean, 
   getRemoteFeatBranches, 
   spinner, 
-  note 
 } = require('../utils');
 
 function getPackageJson() {
@@ -155,7 +154,7 @@ async function preRelease() {
     throw new Error(`操作失败: ${e.message}`);
   }
 
-  log.success(`分支：${releaseBranchName}\n下一步：部署到预发布环境 (通常由 CI/CD 自动完成)。`, '✅ 预发布分支就绪');
+  log.success(`分支：${releaseBranchName}\n下一步：\n1. 等待 CI/CD 部署到预发布环境\n2. 测试通过后，请运行 flow 并选择 "正式发布"`, '✅ 预发布分支就绪');
 }
 
 module.exports = preRelease;

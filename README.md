@@ -76,13 +76,13 @@ npx flow
 
 ### 交互式菜单
 
-
 ```text
-? 请选择当前工作流阶段： (Use arrow keys)
-❯ 阶段 0：AI 智能提交 (使用 AI 生成 Commit Message)
-  阶段 1：特性同步 (将个人分支合并到公共特性分支)
-  阶段 2：预发布 (从公共特性分支创建 Release 分支)
-  阶段 3：正式发布 (将 Release 分支合并到 Master 并发版)
+? 请选择当前工作流阶段
+> AI 智能提交      (生成 Commit Message)
+  特性同步         (个人分支 -> 公共特性分支)
+  预发布           (特性分支 -> Release 分支)
+  正式发布         (Release -> Master)
+  AI 配置          (设置 API Key 等)
 ```
 
 ### 常用命令
@@ -99,7 +99,9 @@ npx flow
 **目标**：利用 AI 自动分析暂存区（Staged）的代码变更，生成符合规范的 Commit Message，减少人工编写成本。
 
 **底层能力**：
-本功能完全基于 [aicommits](https://github.com/Nutlope/aicommits) 实现。`flow ai` 命令等同于调用 `aicommits`。
+本功能基于 [aicommits](https://github.com/Nutlope/aicommits) 封装。
+*   如果不带参数运行 `flow ai`，将进入**交互模式**，提供“生成并复制”、“生成并提交”等选项。
+*   如果带参数运行（如 `flow ai -c -g 3`），则直接透传参数给 `aicommits`。
 
 **配置指南**：
 首次使用需要配置 API Key。推荐使用 `flow ai setup` 进行交互式配置，或参考 `aicommits` 文档进行详细配置。

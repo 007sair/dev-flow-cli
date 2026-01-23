@@ -1,34 +1,32 @@
-const { log, select, execCommandSync, intro, outro, handleCancel } = require('./utils');
+const { log, select, execCommandSync, intro, outro, handleCancel, note } = require('./utils');
 const preRelease = require('./commands/pre-release');
 const releaseFinish = require('./commands/release-finish');
 const featureSyncPro = require('./commands/feature-sync-pro');
 const aiCommitPro = require('./commands/ai-commit-pro');
 const { aiConfig, showConfig } = require('./commands/ai-config');
+const masterSync = require('./commands/master-sync');
 const guide = require('./commands/guide');
 const pkg = require('../package.json');
 const chalk = require('chalk');
 
 function showHelp() {
-  log.info(`🌊 Dev Flow CLI v${pkg.version}`);
-  log.warn('使用方法:');
-  log.message('  flow [command] [options]');
-  
-  log.warn('选项:');
-  log.message('  -v, --version       查看当前版本');
-  log.message('  -h, --help          查看帮助信息');
+  console.log(`
+Dev Flow CLI v${pkg.version}
 
-  log.warn('核心命令:');
-  log.message('  ai                  AI 智能提交 (交互式生成)');
-  log.message('  ai setup            配置 AI 助手 (API Key, 语言, 格式等)');
-  log.message('  ai config           查看当前 AI 配置');
-  
-  log.warn('交互式流程:');
-  log.message('  flow                启动交互式工作流向导 (推荐)');
-  
-  log.warn('文档:');
-  log.message('  guide               查看详细的规范说明');
-  
-  log.message(chalk.gray('\n💡 提示：支持直接运行 flow ai -c -g 3 等 aicommits 原生参数'));
+${chalk.bold('Usage:')}
+  flow [command] [options]
+
+${chalk.bold('Commands:')}
+  ai                  AI 智能提交 (交互式生成)
+  ai setup            配置 AI 助手 (API Key, 语言, 格式等)
+  ai config           查看当前 AI 配置
+  flow                启动交互式工作流向导 (推荐)
+  guide               查看详细的规范说明
+
+${chalk.bold('Flags:')}
+  -v, --version       查看当前版本
+  -h, --help          查看帮助信息
+`);
 }
 
 async function main() {
@@ -88,11 +86,12 @@ async function main() {
   const choice = await select({
     message: '请选择当前工作流阶段',
     options: [
-      { label: 'AI 智能提交', value: 'ai-commit', hint: '生成 Commit Message' },
-      { label: '特性同步', value: 'feature-sync-pro', hint: '个人分支 -> 公共特性分支' },
-      { label: '预发布', value: 'pre-release', hint: '特性分支 -> Release 分支' },
-      { label: '正式发布', value: 'release-finish', hint: 'Release -> Master' },
-      { label: 'AI 配置', value: 'ai-config', hint: '设置 API Key 等' },
+      { label: 'AI 智能提交', value: 'ai-commit', hint: '✨ 自动生成 Commit Message' },
+      { label: '特性同步', value: 'feature-sync-pro', hint: '🔄 个人分支 -> 公共特性分支 (自动 Rebase + Squash)' },
+      { label: '预发布', value: 'pre-release', hint: '🧊 代码冻结：特性分支 -> Release 分支' },
+      { label: '正式发布', value: 'release-finish', hint: '🚀 版本封版：生成 Changelog 并打 Tag' },
+      { label: '主干同步', value: 'master-sync', hint: '🔄 同步 Master 最新代码 (Merge/Rebase)' },
+      { label: 'AI 配置', value: 'ai-config', hint: '⚙️  配置 API Key 及语言偏好' },
     ]
   });
   handleCancel(choice);
@@ -101,6 +100,9 @@ async function main() {
     switch (choice) {
       case 'ai-commit':
         await aiCommitPro();
+        break;
+      case 'master-sync':
+        await masterSync();
         break;
       case 'feature-sync-pro':
         await featureSyncPro();
